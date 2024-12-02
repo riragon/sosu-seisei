@@ -1,16 +1,18 @@
+use eframe::{egui, App};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
-use std::process;
-use std::io::{self, BufWriter, Write, Read};
 use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Read, Write};
 use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Instant;
+
 use bitvec::prelude::*;
 use rayon::prelude::*;
 
 const SETTINGS_FILE: &str = "settings.txt";
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Config {
     prime_cache_size: usize,
     segment_size: u64,
@@ -32,59 +34,193 @@ impl Default for Config {
 }
 
 fn main() {
-    if let Err(e) = run_program() {
-        eprintln!("プログラム実行中にエラーが発生しました：{}", e);
-        process::exit(1);
+    let options = eframe::NativeOptions::default();
+    eframe::run_native(
+        "素数生成プログラム",
+        options,
+        Box::new(|cc| Box::new(MyApp::new(cc))),
+    );
+}
+
+struct MyApp {
+    config: Config,
+    is_running: bool,
+    log: String,
+    receiver: Option<mpsc::Receiver<String>>,
+}
+
+impl MyApp {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // フォントを設定
+        let mut fonts = egui::FontDefinitions::default();
+
+        // フォントファイルのパス
+        let font_path = "assets/NotoSansJP-Black.ttf";
+
+        // フォントデータを読み込み
+        if let Ok(mut font_file) = File::open(font_path) {
+            let mut font_data = Vec::new();
+            if font_file.read_to_end(&mut font_data).is_ok() {
+                // フォントデータを追加
+                fonts.font_data.insert(
+                    "NotoSansJP".to_owned(),
+                    egui::FontData::from_owned(font_data),
+                );
+
+                // フォントの優先度を設定
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
+                    .or_default()
+                    .insert(0, "NotoSansJP".to_owned());
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "NotoSansJP".to_owned());
+            } else {
+                eprintln!("フォントファイルの読み込みに失敗しました。");
+            }
+        } else {
+            eprintln!("フォントファイルが見つかりません。パスを確認してください。");
+        }
+
+        // コンテキストにフォント設定を適用
+        cc.egui_ctx.set_fonts(fonts);
+
+        let config = load_or_create_config().unwrap_or_default();
+        MyApp {
+            config,
+            is_running: false,
+            log: String::new(),
+            receiver: None,
+        }
     }
 }
 
-fn run_program() -> Result<(), Box<dyn Error>> {
-    // プログラム実行前の確認プロンプト
-    println!("sosu.exeを実行します。実行しますか？\nEnterキーを押すと実行が開始されます。");
-    let mut input = String::new();
-    io::stdout().flush()?; // プロンプトを即座に表示
+impl App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // スレッドからのメッセージを受信
+        if let Some(ref receiver) = self.receiver {
+            let mut remove_receiver = false;
+            while let Ok(message) = receiver.try_recv() {
+                if message == "done" {
+                    self.is_running = false;
+                    remove_receiver = true;
+                } else {
+                    self.log.push_str(&message);
+                }
+            }
 
-    // Enterキーが押されるまで待機
-    io::stdin().read_line(&mut input)?;
+            if remove_receiver {
+                self.receiver = None;
+            }
+        }
 
-    // デバッグメッセージ
-    println!("入力を受け取りました。プログラムを続行します。");
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("設定");
 
-    // 設定ファイルを読み込むか、作成する
-    let config = load_or_create_config()?;
+            ui.add(
+                egui::Slider::new(&mut self.config.prime_cache_size, 1..=1_000_000)
+                    .text("prime_cache_size"),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.config.segment_size, 1_000_000..=100_000_000)
+                    .text("segment_size"),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.config.chunk_size, 1_024..=65_536)
+                    .text("chunk_size"),
+            );
+            ui.add(
+                egui::Slider::new(
+                    &mut self.config.writer_buffer_size,
+                    1024..=16 * 1024 * 1024,
+                )
+                .text("writer_buffer_size"),
+            );
+            ui.add(
+                egui::Slider::new(
+                    &mut self.config.prime_max,
+                    1_000_000..=100_000_000_000u64,
+                )
+                .text("prime_max"),
+            );
 
-    // デバッグメッセージ
-    println!("設定ファイルを読み込みました。");
+            if ui.button("設定を保存").clicked() {
+                if let Err(e) = save_config(&self.config) {
+                    self.log
+                        .push_str(&format!("設定の保存に失敗しました: {}\n", e));
+                } else {
+                    self.log.push_str("設定を保存しました。\n");
+                }
+            }
+
+            if ui.button("実行").clicked() && !self.is_running {
+                self.is_running = true;
+                let config = self.config.clone();
+                let (sender, receiver) = mpsc::channel();
+                self.receiver = Some(receiver);
+
+                // 別スレッドで実行
+                thread::spawn(move || {
+                    if let Err(e) = run_program(config, sender.clone()) {
+                        let _ = sender.send(format!("エラーが発生しました: {}\n", e));
+                    }
+                    // 完了を通知
+                    let _ = sender.send("done".to_string());
+                });
+            }
+
+            if self.is_running {
+                ui.label("実行中...");
+            } else {
+                ui.label("待機中");
+            }
+
+            ui.separator();
+            ui.heading("ログ");
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.label(&self.log);
+            });
+        });
+
+        // 再描画をリクエスト
+        ctx.request_repaint();
+    }
+}
+
+// 変更点：run_program関数でログメッセージを逐次送信
+fn run_program(
+    config: Config,
+    sender: mpsc::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    sender.send("プログラムを開始します。\n".to_string()).ok();
 
     // プログラム全体の開始時間を記録
     let total_start_time = Instant::now();
 
-    // 素数の総数をカウントする変数
-    let mut total_primes_found: usize = 0;
-
-    println!("使用する設定:");
-    println!("Prime cache size: {}", config.prime_cache_size);
-    println!("Segment size: {}", config.segment_size);
-    println!("Chunk size: {}", config.chunk_size);
-    println!("Writer buffer size: {}", config.writer_buffer_size);
-    println!("Prime max: {}", config.prime_max);
-
     // 素数を保存するファイルを開く（新規作成・上書きモード）と大きなバッファサイズを設定
     let file = OpenOptions::new()
         .create(true)
-        .truncate(true) // 既存のファイルを上書き
+        .truncate(true)
         .write(true)
         .open("primes.txt")
         .map_err(|e| format!("primes.txtのオープンに失敗しました：{}", e))?;
 
     let mut writer = BufWriter::with_capacity(config.writer_buffer_size, file);
 
-    // 最初の PRIME_CACHE_SIZE 個の素数を計算
+    // 最初の prime_cache_size 個の素数を計算
     let small_primes = generate_small_primes(config.prime_cache_size)?;
-    println!("最初の{}個の素数を生成しました。", small_primes.len());
+    sender
+        .send(format!(
+            "最初の{}個の素数を生成しました。\n",
+            small_primes.len()
+        ))
+        .ok();
 
-    // 素数の総数を更新
-    total_primes_found += small_primes.len();
+    // 素数の総数をカウント
+    let mut total_primes_found = small_primes.len();
 
     // 最初の小さな素数をファイルに一括書き込み
     for &prime in &small_primes {
@@ -95,19 +231,19 @@ fn run_program() -> Result<(), Box<dyn Error>> {
     let mut low = small_primes.last().unwrap() + 1;
 
     while low <= config.prime_max {
-        let high = low.saturating_add(config.segment_size - 1).min(config.prime_max);
+        let high = low
+            .saturating_add(config.segment_size - 1)
+            .min(config.prime_max);
 
-        println!("セグメントを処理中：{} - {}", low, high);
+        sender
+            .send(format!("セグメントを処理中：{} - {}\n", low, high))
+            .ok();
 
         let segment_start_time = Instant::now();
 
         // セグメント内で並列処理を行う
-        let segment_primes = segmented_sieve_parallel(
-            &small_primes,
-            low,
-            high,
-            config.chunk_size,
-        )?;
+        let segment_primes =
+            segmented_sieve_parallel(&small_primes, low, high, config.chunk_size)?;
 
         if !segment_primes.is_empty() {
             // ファイルへの書き込みをメインスレッドで一括処理
@@ -119,41 +255,48 @@ fn run_program() -> Result<(), Box<dyn Error>> {
             // 素数の総数を更新
             total_primes_found += segment_primes.len();
 
-            // コンソールへの出力を制限
-            println!("このセグメントで{}個の素数を見つけました。", segment_primes.len());
+            sender
+                .send(format!(
+                    "このセグメントで{}個の素数を見つけました。\n",
+                    segment_primes.len()
+                ))
+                .ok();
         }
 
         let segment_duration = segment_start_time.elapsed();
-        println!(
-            "セグメント完了：{} - {}（処理時間：{:.2?}）",
-            low, high, segment_duration
-        );
+        sender
+            .send(format!(
+                "セグメント完了：{} - {}（処理時間：{:.2?}）\n",
+                low, high, segment_duration
+            ))
+            .ok();
 
         // 次のセグメントへ移動
         low = high + 1;
     }
 
     // バッファをフラッシュ
-    writer.flush()
+    writer
+        .flush()
         .map_err(|e| format!("バッファのフラッシュに失敗しました：{}", e))?;
 
     // プログラム全体の終了時間を記録
     let total_duration = total_start_time.elapsed();
-    println!("総計算時間：{:.2?}", total_duration);
+    sender
+        .send(format!("総計算時間：{:.2?}\n", total_duration))
+        .ok();
 
     // 総素数数を表示
-    println!("見つかった素数の総数：{}", total_primes_found);
-
-    // プログラム終了前に、ユーザーが入力を行うまで待機
-    println!("プログラムが完了しました。終了するにはEnterキーを押してください。");
-    io::stdout().flush()?; // プロンプトを即座に表示
-    let mut exit_input = String::new();
-    io::stdin().read_line(&mut exit_input)?;
+    sender
+        .send(format!("見つかった素数の総数：{}\n", total_primes_found))
+        .ok();
 
     Ok(())
 }
 
-fn load_or_create_config() -> Result<Config, Box<dyn Error>> {
+// 他の関数（load_or_create_config、save_config、generate_small_primes、estimate_sieve_size、segmented_sieve_parallel）は変更ありません。
+
+fn load_or_create_config() -> Result<Config, Box<dyn std::error::Error>> {
     if Path::new(SETTINGS_FILE).exists() {
         // 設定ファイルが存在する場合、読み込む
         let mut file = File::open(SETTINGS_FILE)?;
@@ -163,20 +306,16 @@ fn load_or_create_config() -> Result<Config, Box<dyn Error>> {
         let config = toml::from_str(&contents)
             .map_err(|e| format!("設定ファイルのパースに失敗しました：{}", e))?;
 
-        println!("settings.txt を読み込みました。");
-
         Ok(config)
     } else {
         // 設定ファイルが存在しない場合、デフォルト設定を作成して書き出す
         let config = Config::default();
         save_config(&config)?;
-        println!("settings.txt を書き出しました。");
-
         Ok(config)
     }
 }
 
-fn save_config(config: &Config) -> Result<(), Box<dyn Error>> {
+fn save_config(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     let toml_str = toml::to_string(config)?;
     let file = File::create(SETTINGS_FILE)?;
     let mut writer = BufWriter::new(file);
@@ -184,7 +323,7 @@ fn save_config(config: &Config) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn generate_small_primes(n: usize) -> Result<Vec<u64>, Box<dyn Error>> {
+fn generate_small_primes(n: usize) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
     let sieve_size = estimate_sieve_size(n);
     let mut is_prime = bitvec![1; sieve_size];
     let mut primes = Vec::with_capacity(n);
@@ -198,7 +337,9 @@ fn generate_small_primes(n: usize) -> Result<Vec<u64>, Box<dyn Error>> {
             if primes.len() >= n {
                 break;
             }
-            let start = num.checked_mul(num).ok_or("整数オーバーフローが発生しました")?;
+            let start = num
+                .checked_mul(num)
+                .ok_or("整数オーバーフローが発生しました")?;
             for multiple in (start..sieve_size).step_by(num) {
                 is_prime.set(multiple, false);
             }
@@ -222,7 +363,7 @@ fn segmented_sieve_parallel(
     low: u64,
     high: u64,
     chunk_size: usize,
-) -> Result<Vec<u64>, Box<dyn Error>> {
+) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
     let size = (high - low + 1) as usize;
     let mut is_prime = bitvec![1; size];
 
