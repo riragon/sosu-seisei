@@ -1,5 +1,6 @@
-prime_cache_size = 100000
+prime_cache_size = 250000
 segment_size = 10000000
 chunk_size = 16384
 writer_buffer_size = 8388608
-prime_max = 10000000000
+prime_min = 1000
+prime_max = 10000000

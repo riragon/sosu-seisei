@@ -18,6 +18,7 @@ struct Config {
     segment_size: u64,
     chunk_size: usize,
     writer_buffer_size: usize,
+    prime_min: u64,
     prime_max: u64,
 }
 
@@ -28,6 +29,7 @@ impl Default for Config {
             segment_size: 10_000_000,
             chunk_size: 16_384,
             writer_buffer_size: 8 * 1024 * 1024,
+            prime_min: 1,
             prime_max: 10_000_000_000,
         }
     }
@@ -47,6 +49,8 @@ struct MyApp {
     is_running: bool,
     log: String,
     receiver: Option<mpsc::Receiver<String>>,
+    prime_min_input: String,
+    prime_max_input: String,
 }
 
 impl MyApp {
@@ -90,6 +94,8 @@ impl MyApp {
 
         let config = load_or_create_config().unwrap_or_default();
         MyApp {
+            prime_min_input: config.prime_min.to_string(),
+            prime_max_input: config.prime_max.to_string(),
             config,
             is_running: false,
             log: String::new(),
@@ -139,37 +145,91 @@ impl App for MyApp {
                 )
                 .text("writer_buffer_size"),
             );
-            ui.add(
-                egui::Slider::new(
-                    &mut self.config.prime_max,
-                    1_000_000..=100_000_000_000u64,
-                )
-                .text("prime_max"),
-            );
+
+            ui.horizontal(|ui| {
+                ui.label("prime_min:");
+                ui.text_edit_singleline(&mut self.prime_min_input);
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("prime_max:");
+                ui.text_edit_singleline(&mut self.prime_max_input);
+            });
 
             if ui.button("設定を保存").clicked() {
-                if let Err(e) = save_config(&self.config) {
-                    self.log
-                        .push_str(&format!("設定の保存に失敗しました: {}\n", e));
+                let mut errors = Vec::new();
+
+                // prime_min の値をパース
+                match self.prime_min_input.trim().parse::<u64>() {
+                    Ok(value) => self.config.prime_min = value,
+                    Err(_) => errors.push("prime_min の値が不正です。正の整数を入力してください。"),
+                }
+
+                // prime_max の値をパース
+                match self.prime_max_input.trim().parse::<u64>() {
+                    Ok(value) => self.config.prime_max = value,
+                    Err(_) => errors.push("prime_max の値が不正です。正の整数を入力してください。"),
+                }
+
+                // prime_min と prime_max の関係を確認
+                if self.config.prime_min >= self.config.prime_max {
+                    errors.push("prime_min は prime_max より小さい必要があります。");
+                }
+
+                if errors.is_empty() {
+                    if let Err(e) = save_config(&self.config) {
+                        self.log
+                            .push_str(&format!("設定の保存に失敗しました: {}\n", e));
+                    } else {
+                        self.log.push_str("設定を保存しました。\n");
+                    }
                 } else {
-                    self.log.push_str("設定を保存しました。\n");
+                    for error in errors {
+                        self.log.push_str(&format!("{}\n", error));
+                    }
                 }
             }
 
             if ui.button("実行").clicked() && !self.is_running {
-                self.is_running = true;
-                let config = self.config.clone();
-                let (sender, receiver) = mpsc::channel();
-                self.receiver = Some(receiver);
+                // 実行前に入力値を検証
+                let mut errors = Vec::new();
 
-                // 別スレッドで実行
-                thread::spawn(move || {
-                    if let Err(e) = run_program(config, sender.clone()) {
-                        let _ = sender.send(format!("エラーが発生しました: {}\n", e));
+                // prime_min の値をパース
+                match self.prime_min_input.trim().parse::<u64>() {
+                    Ok(value) => self.config.prime_min = value,
+                    Err(_) => errors.push("prime_min の値が不正です。正の整数を入力してください。"),
+                }
+
+                // prime_max の値をパース
+                match self.prime_max_input.trim().parse::<u64>() {
+                    Ok(value) => self.config.prime_max = value,
+                    Err(_) => errors.push("prime_max の値が不正です。正の整数を入力してください。"),
+                }
+
+                // prime_min と prime_max の関係を確認
+                if self.config.prime_min >= self.config.prime_max {
+                    errors.push("prime_min は prime_max より小さい必要があります。");
+                }
+
+                if errors.is_empty() {
+                    self.is_running = true;
+                    let config = self.config.clone();
+                    let (sender, receiver) = mpsc::channel();
+                    self.receiver = Some(receiver);
+
+                    // 別スレッドで実行
+                    thread::spawn(move || {
+                        if let Err(e) = run_program(config, sender.clone()) {
+                            let _ = sender.send(format!("エラーが発生しました: {}\n", e));
+                        }
+                        // 完了を通知
+                        let _ = sender.send("done".to_string());
+                    });
+                } else {
+                    for error in errors {
+                        self.log.push_str(&format!("{}\n", error));
                     }
-                    // 完了を通知
-                    let _ = sender.send("done".to_string());
-                });
+                }
             }
 
             if self.is_running {
@@ -190,7 +250,7 @@ impl App for MyApp {
     }
 }
 
-// 変更点：run_program関数でログメッセージを逐次送信
+// run_program関数でログメッセージを逐次送信
 fn run_program(
     config: Config,
     sender: mpsc::Sender<String>,
@@ -220,15 +280,21 @@ fn run_program(
         .ok();
 
     // 素数の総数をカウント
-    let mut total_primes_found = small_primes.len();
+    let mut total_primes_found = 0;
 
     // 最初の小さな素数をファイルに一括書き込み
     for &prime in &small_primes {
-        writeln!(writer, "{}", prime)
-            .map_err(|e| format!("ファイルへの書き込みに失敗しました：{}", e))?;
+        if prime >= config.prime_min {
+            writeln!(writer, "{}", prime)
+                .map_err(|e| format!("ファイルへの書き込みに失敗しました：{}", e))?;
+            total_primes_found += 1;
+        }
     }
 
-    let mut low = small_primes.last().unwrap() + 1;
+    let mut low = std::cmp::max(
+        config.prime_min,
+        small_primes.last().cloned().unwrap_or(2) + 1,
+    );
 
     while low <= config.prime_max {
         let high = low
@@ -248,12 +314,12 @@ fn run_program(
         if !segment_primes.is_empty() {
             // ファイルへの書き込みをメインスレッドで一括処理
             for &prime in &segment_primes {
-                writeln!(writer, "{}", prime)
-                    .map_err(|e| format!("ファイルへの書き込みに失敗しました：{}", e))?;
+                if prime >= config.prime_min && prime <= config.prime_max {
+                    writeln!(writer, "{}", prime)
+                        .map_err(|e| format!("ファイルへの書き込みに失敗しました：{}", e))?;
+                    total_primes_found += 1;
+                }
             }
-
-            // 素数の総数を更新
-            total_primes_found += segment_primes.len();
 
             sender
                 .send(format!(
