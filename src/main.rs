@@ -55,6 +55,8 @@ struct MyApp {
 
 impl MyApp {
     fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        // Removed font settings as Japanese fonts are not used.
+
         let config = load_or_create_config().unwrap_or_default();
         MyApp {
             prime_min_input: config.prime_min.to_string(),
