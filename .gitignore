@@ -3,6 +3,7 @@
 
 # Ignore generated files
 primes.txt
+settings.txt
 
 # Rust/Cargo related
 **/*.rs.bk
