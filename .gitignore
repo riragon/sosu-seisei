@@ -1,0 +1,23 @@
+# Build directory
+/target
+
+# Ignore generated files
+primes.txt
+
+# Rust/Cargo related
+**/*.rs.bk
+Cargo.lock
+
+# IDE and editor files
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Log files
+*.log
+
+# Environment files
+.env
+.env.*
