@@ -1,6 +1,6 @@
 [package]
 name = "sosu-seisei"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -13,3 +13,4 @@ eframe = "0.20"
 num-bigint = "0.4"
 num-traits = "0.2"
 miller_rabin = "1.1.1"
+sysinfo = "0.29"
