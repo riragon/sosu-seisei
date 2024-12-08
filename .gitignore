@@ -5,6 +5,7 @@
 primes.txt
 settings.txt
 prime.txt
+text-read-settings.txt
 
 # Rust/Cargo related
 **/*.rs.bk
