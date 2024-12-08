@@ -12,7 +12,7 @@ use num_bigint::BigUint;
 use num_traits::{One, ToPrimitive, Zero};
 use sysinfo::{System, SystemExt, CpuExt};
 use std::collections::HashMap;
-use egui::plot::{Plot, BarChart, Bar, Legend};
+use egui_plot::{Plot, BarChart, Bar, Legend};
 
 // 定数定義（Miller-Rabin）
 const MR_BASES_64: [u64; 7] = [2,325,9375,28178,450775,9780504,1795265022];
@@ -170,10 +170,11 @@ fn is_bpsw_prime_check(n:u64)->bool {
 
 fn main() {
     let options = eframe::NativeOptions::default();
-    eframe::run_native(
+    // 戻り値を明示的に無視
+    let _ = eframe::run_native(
         "Sosu-Seisei Settings",
         options,
-        Box::new(|cc| Box::new(MyApp::new(cc))),
+        Box::new(|cc| Ok(Box::new(MyApp::new(cc)))),
     );
 }
 
@@ -331,7 +332,6 @@ impl MyApp {
     }
 
     fn start_verification(&mut self) {
-        // too_large_valueにかかわらずVerify可能にする
         self.log.push_str("Starting prime verification (Baillie-PSW)...\n");
         let (sender, receiver) = mpsc::channel::<WorkerMessage>();
         let stop_flag = self.stop_flag.clone();
@@ -364,19 +364,19 @@ impl App for MyApp {
                         let p = current as f32 / total as f32;
                         self.progress = p;
                     }
-                    WorkerMessage::Eta(eta_str)=>{
+                    WorkerMessage::Eta(eta_str)=> {
                         self.eta=eta_str;
                     }
-                    WorkerMessage::CpuMemUsage { cpu_percent, mem_usage }=>{
+                    WorkerMessage::CpuMemUsage { cpu_percent, mem_usage }=> {
                         self.cpu_usage=cpu_percent;
                         self.mem_usage=mem_usage;
                     }
-                    WorkerMessage::HistogramUpdate { histogram }=>{
+                    WorkerMessage::HistogramUpdate { histogram }=> {
                         if !histogram.is_empty() {
                             self.histogram_data.extend_from_slice(&histogram);
                         }
                     }
-                    WorkerMessage::FoundPrimeIndex(pr,idx)=>{
+                    WorkerMessage::FoundPrimeIndex(pr,idx)=> {
                         self.recent_primes.push(pr);
                         if self.recent_primes.len()>self.max_recent_primes {
                             self.recent_primes.remove(0);
@@ -398,16 +398,16 @@ impl App for MyApp {
                         }
                         self.last_prime=Some(pr);
                     }
-                    WorkerMessage::Done=>{
+                    WorkerMessage::Done=> {
                         self.is_running=false;
                         remove_receiver=true;
                     }
-                    WorkerMessage::Stopped=>{
+                    WorkerMessage::Stopped=> {
                         self.is_running=false;
                         remove_receiver=true;
                         self.log.push_str("Process stopped by user.\n");
                     }
-                    WorkerMessage::VerificationDone(msg)=>{
+                    WorkerMessage::VerificationDone(msg)=> {
                         self.log.push_str(&format!("Verification: {}\n",msg));
                         self.is_verifying=false;
                         remove_receiver=true;
@@ -419,9 +419,8 @@ impl App for MyApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx,|ui|{
-            egui::ScrollArea::vertical().show(ui,|ui|{
-
+        egui::CentralPanel::default().show(ctx,|ui| {
+            egui::ScrollArea::vertical().show(ui,|ui| {
                 ui.heading("Sosu-Seisei Settings");
                 ui.separator();
 
@@ -518,7 +517,7 @@ impl App for MyApp {
                     left.separator();
                     left.heading("Prime Gaps Distribution");
                     if !self.histogram_data.is_empty() {
-                        let gap_bars: Vec<Bar> = self.gap_counts.iter().map(|(g,count)|{
+                        let gap_bars: Vec<Bar> = self.gap_counts.iter().map(|(g,count)| {
                             Bar::new(*g as f64, *count as f64)
                                 .width(0.9)
                                 .name(format!("Gap {}: {} times", g, count))
@@ -549,7 +548,6 @@ impl App for MyApp {
 
                     left.separator();
                     left.heading("Verify Primes");
-                    // too_large_valueに関係なくVerify Primesが可能
                     if !self.is_running && !self.is_verifying {
                         if left.button("Verify Primes").clicked() {
                             self.start_verification();
@@ -770,7 +768,7 @@ fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_flag
     let prime_cache_size = (prime_max as f64).sqrt() as u64 + 1;
     let small_primes = simple_sieve(prime_cache_size);
 
-    let histogram_interval = 50_000u64; // 小さくして頻繁に更新
+    let histogram_interval = 50_000u64; // update interval
     let mut next_histogram_mark = prime_min + histogram_interval;
     let mut current_interval_count = 0u64;
 
@@ -963,7 +961,7 @@ fn verify_primes_bpsw_all_composites(sender:mpsc::Sender<WorkerMessage>,stop_fla
         let l=line?;
         let n:u64=match l.trim().parse() {
             Ok(v)=>v,
-            Err(_)=>{
+            Err(_)=> {
                 composites.push(l.trim().to_string());
                 count+=1;
                 continue;
