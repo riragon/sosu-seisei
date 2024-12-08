@@ -6,3 +6,5 @@ git push
 git branch
 git push --force
 git clone 
+
+cargo run --release
