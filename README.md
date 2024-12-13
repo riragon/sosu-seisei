@@ -1,3 +1,8 @@
+
+![1956](https://github.com/user-attachments/assets/f1cbc201-ccff-4b28-9868-9af1430de862)
+
+
+
 <h2>概要</h2>
 Sosu-Seisei は、指定した範囲内の素数を効率的に生成するツールです。<br>
 18桁ぐらいまでの素数を指定して出力できます。1～約9999兆ぐらいです。1京かな？<br>
