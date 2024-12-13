@@ -10,7 +10,6 @@ pub struct Config {
     pub writer_buffer_size: usize,
     pub prime_min: String,
     pub prime_max: String,
-    pub miller_rabin_rounds: u64,
 }
 
 impl Default for Config {
@@ -21,7 +20,6 @@ impl Default for Config {
             writer_buffer_size: 8 * 1024 * 1024,
             prime_min: "1".to_string(),
             prime_max: "1000000".to_string(),
-            miller_rabin_rounds: 64,
         }
     }
 }

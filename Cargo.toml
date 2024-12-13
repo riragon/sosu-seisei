@@ -10,8 +10,4 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.7"
 egui = "0.29"
 eframe = "0.29"
-egui_plot = "0.29"
-num-bigint = "0.4"
-num-traits = "0.2"
-miller_rabin = "1.1.1"
 sysinfo = "0.29"
