@@ -3,69 +3,88 @@
 
 
 
-<h2>概要</h2>
-Sosu-Seisei は、指定した範囲内の素数を効率的に生成するツールです。<br>
-18桁ぐらいまでの素数を指定して出力できます。1～約9999兆ぐらいです。1京かな？<br>
-何GBにもなる素数テキストや、兆クラスの素数リストが欲しい場合に有効です。ネットだとダウンロードが大変ですが自分でつくれば自由です。
-本ツールは GUI を通じて、64ビット整数範囲でのセグメント化エラトステネスの篩を用いた旧方式（Sieve 法）による素数列挙を行います。<br>
-<code>prime_min</code> と <code>prime_max</code> を入力し、「Run (Old Method)」ボタンを押せば、指定範囲内の素数が <code>primes.txt</code> に出力されます。<br><br>
+<h2>Sosu-Seisei Sieve</h2>
+Sosu-Seisei Sieve is a tool designed for efficiently generating prime numbers over large numerical intervals.<br>
+Developed in Rust, this GUI application employs <code>eframe</code> (based on <code>egui</code>) to provide a cross-platform graphical user interface.<br>
+Parallelization is achieved through <code>rayon</code>, while memory usage monitoring utilizes <code>sysinfo</code>.<br><br>
 
-<h2>方式 (Sieve 法)</h2>
-<code>prime_min</code> から <code>prime_max</code> までの範囲を、小さなセグメントに分割してエラトステネスの篩を適用する「セグメント化篩」により、高速かつメモリ効率よく素数を求めます。<br>
-<code>bitvec</code> クレートによるビット単位の管理でメモリ使用量を低減しています。<br><br>
+<h2>Key Features</h2>
+- Employs segmented sieving of Eratosthenes to efficiently compute large ranges of prime numbers.<br>
+- Users can specify the range via <code>prime_min</code> and <code>prime_max</code> (with a theoretical upper bound of 999999999999999999).<br>
+- The <code>split_count</code> parameter allows output files to be divided into multiple parts (with 0 indicating no segmentation).<br>
+- Selectable output formats include <code>Text</code>, <code>CSV</code>, and <code>JSON</code>.<br>
+- Settings can be modified through the GUI, and execution can be started or interrupted as desired.<br>
+- During execution, the progress percentage, estimated time remaining (ETA), and memory usage are displayed.<br>
+- Configuration parameters are stored in <code>settings.txt</code> (in TOML format), which is automatically updated upon configuration changes via the GUI.<br><br>
 
-<h2>使用クレート</h2>
-<ul>
-  <li><b>rayon</b>: 並列処理で篩計算を高速化</li>
-  <li><b>bitvec</b>: ビットベクトルでメモリ使用量を削減</li>
-  <li><b>serde + toml</b>: 設定ファイル (<code>settings.txt</code>) の読み書き</li>
-  <li><b>egui + eframe</b>: GUI 構築用フレームワーク</li>
-  <li><b>sysinfo</b>: システム情報取得（メモリ使用量など）</li>
-</ul>
-<br>
-
-<h2>インストールと実行</h2>
-1. リポジトリをクローン:<br>
-<code>git clone https://github.com/riragon/sosu-seisei.git</code><br>
-<code>cd sosu-seisei</code><br><br>
-
-2. リリースビルドで実行:<br>
-<code>cargo run --release</code><br><br>
-起動後に GUI ウィンドウが表示されます。<code>settings.txt</code> が存在しない場合は自動生成されます。<br><br>
-
-<h2>設定ファイル (settings.txt)</h2>
-<code>settings.txt</code> は TOML 形式で、セグメントサイズや範囲 (<code>prime_min</code>, <code>prime_max</code>) などを指定可能。<br>
-初回起動時に自動生成され、停止後に編集した値は次回起動時に反映されます。<br><br>
-
-<h2>出力ファイル (primes.txt)</h2>
-「Run (Old Method)」実行後、求めた素数が行ごとに <code>primes.txt</code> に出力されます。<br>
-同名ファイルは上書きされるため、必要ならバックアップを取得してください。<br><br>
-
-<h2>GUI の使用方法</h2>
-1. <code>prime_min</code> (下限) と <code>prime_max</code> (上限) を入力<br>
-2. 「Run (Old Method)」をクリックで計算開始<br>
-3. 計算完了後、<code>primes.txt</code> に素数一覧が出力されます。<br>
-処理状況やログはウィンドウ下部に表示されます。<br><br>
-
-<h2>注意事項</h2>
-- 非常に大きな <code>prime_max</code> を指定すると、計算に時間やメモリが多く必要になります。<br>
-- 環境に応じて範囲やセグメントサイズを適宜調整してください。<br><br>
-
-<h2>プロジェクト構成</h2>
+<h2>Directory Structure</h2>
 <pre>
 sosu-seisei/
-├─ src/
-│  ├─ app.rs          # GUIおよびアプリロジック
-│  ├─ config.rs       # 設定ファイル関連処理
-│  ├─ sieve.rs        # セグメント化エラトステネスの篩による素数生成処理
-│  ├─ lib.rs          # モジュール宣言
-│  └─ main.rs         # メインプログラム (GUI起動)
-├─ settings.txt       # 設定ファイル (自動生成)
-├─ primes.txt         # 結果出力ファイル (素数一覧)
-├─ Cargo.toml         # プロジェクト設定
-└─ Cargo.lock         # 依存関係ロックファイル
+├─ Cargo.toml
+├─ settings.txt
+└─ src/
+   ├─ main.rs
+   ├─ lib.rs
+   ├─ app.rs
+   ├─ config.rs
+   └─ sieve.rs
+</pre>
+- <code>Cargo.toml</code>: Defines project dependencies and meta-information.<br>
+- <code>settings.txt</code>: The configuration file (TOML format).<br>
+- <code>src/main.rs</code>: Entry point for the application (launches the GUI).<br>
+- <code>src/lib.rs</code>: Module definitions.<br>
+- <code>src/app.rs</code>: Implements the GUI logic, configuration management, and task execution triggers.<br>
+- <code>src/config.rs</code>: Handles reading and writing of settings, and defines the <code>Config</code> structure.<br>
+- <code>src/sieve.rs</code>: Implements prime number calculations (segmented sieve of Eratosthenes) and parallel processing logic.<br><br>
+
+<h2>Setup and Build</h2>
+1. Verify that Rust is installed. If not, please refer to the <a href="https://www.rust-lang.org/ja">official website</a> for installation instructions.<br><br>
+2. Navigate to the project directory and execute the following command:<br>
+<pre>
+cargo build --release
+</pre>
+Upon successful completion, the binary will be generated in the <code>target/release/</code> directory.<br><br>
+
+<h2>Execution</h2>
+<pre>
+cargo run --release
+</pre>
+This command will launch the GUI window.<br><br>
+
+<h2>Regarding the Configuration File (<code>settings.txt</code>)</h2>
+<code>settings.txt</code> is in TOML format and is automatically generated upon the first execution.<br>
+Subsequent modifications through the GUI will be saved automatically.<br><br>
+
+An example of initial settings (<code>settings.txt</code>):<br>
+<pre>
+segment_size = 10000000
+chunk_size = 16384
+writer_buffer_size = 8388608
+prime_min = "1"
+prime_max = "10000000000"
+output_format = "Text"
+output_dir = "C:\\Users\\saijo\\Desktop\\素数フォルダー"
+split_count = 0
 </pre>
 
-<h2>ライセンス</h2>
-このプロジェクトは MIT ライセンスで公開されています。<br>
-詳細は <code>LICENSE</code> ファイルを参照してください。<br>
+<h2>Parameter Descriptions</h2>
+- <code>segment_size</code>: The range size for each sieve segment. Larger values increase memory consumption.<br>
+- <code>chunk_size</code>: The chunk size employed during processing.<br>
+- <code>writer_buffer_size</code>: The buffer size for file writing operations.<br>
+- <code>prime_min</code>: The lower bound of the prime range (specified as a string).<br>
+- <code>prime_max</code>: The upper bound of the prime range (specified as a string).<br>
+- <code>output_format</code>: Select from <code>Text</code>, <code>CSV</code>, or <code>JSON</code>.<br>
+- <code>output_dir</code>: The directory path for output files.<br>
+- <code>split_count</code>: The number of primes per output file segment (0 indicates no segmentation).<br><br>
+
+<h2>Instructions for Use</h2>
+1. After launching the application, specify <code>prime_min</code> and <code>prime_max</code> in the GUI.<br>
+2. If necessary, set <code>split_count</code> to segment the output files.<br>
+3. Select the desired <code>Output Format</code>.<br>
+4. Specify the <code>Output Directory</code> (selectable via the <code>Select Folder</code> button).<br>
+5. Once all settings are configured, click the <code>Run</code> button to start processing.<br>
+6. During execution, you may click the <code>STOP</code> button to interrupt the process.<br>
+7. Check the <code>Log</code> section at the bottom of the interface to review progress and error messages.<br><br>
+
+<h2>License</h2>
+This project is provided under the MIT License. Please refer to the <code>LICENSE</code> file for details.<br>

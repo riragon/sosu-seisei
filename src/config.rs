@@ -1,3 +1,8 @@
+// Copyright (c) 2024 riragon
+//
+// This software is released under the MIT License.
+// See LICENSE file in the project root directory for more information.
+
 use serde::{Deserialize, Serialize};
 use std::fs::{File};
 use std::io::{BufWriter, Read, Write};
@@ -18,10 +23,9 @@ pub struct Config {
     pub prime_min: String,
     pub prime_max: String,
     pub output_format: OutputFormat,
-    pub output_dir: String, 
-    // 以下を追加
+    pub output_dir: String,
     #[serde(default)]
-    pub split_count: u64, // 0なら分割しない
+    pub split_count: u64,
 }
 
 impl Default for Config {
@@ -34,7 +38,7 @@ impl Default for Config {
             prime_max: "1000000".to_string(),
             output_format: OutputFormat::Text,
             output_dir: ".".to_string(),
-            split_count: 0, // デフォルトは分割機能オフ
+            split_count: 0,
         }
     }
 }

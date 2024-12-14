@@ -1,3 +1,8 @@
+// Copyright (c) 2024 riragon
+//
+// This software is released under the MIT License.
+// See LICENSE file in the project root directory for more information.
+
 use std::sync::{mpsc,Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::{BufWriter, Write};
