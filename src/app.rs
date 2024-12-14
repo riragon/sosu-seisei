@@ -4,6 +4,7 @@ use std::sync::{mpsc, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::sieve::run_program_old;
 use sysinfo::{System, SystemExt};
+use rfd::FileDialog; // 追加
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum WorkerMessage {
@@ -35,6 +36,7 @@ pub struct MyApp {
     pub total_range: u64,
 
     pub selected_format: OutputFormat,
+    pub output_dir_input: String,
 }
 
 impl MyApp {
@@ -45,6 +47,7 @@ impl MyApp {
         let total_mem = sys.total_memory(); // in KB
 
         let selected_format = config.output_format.clone();
+        let output_dir_input = config.output_dir.clone();
 
         MyApp {
             prime_min_input_old: config.prime_min.clone(),
@@ -64,6 +67,7 @@ impl MyApp {
             total_range: 0,
 
             selected_format,
+            output_dir_input,
         }
     }
 }
@@ -92,9 +96,7 @@ impl App for MyApp {
                     WorkerMessage::MemUsage(mem_usage) => {
                         self.mem_usage = mem_usage;
                     }
-                    WorkerMessage::FoundPrimeIndex(_pr, _idx) => {
-                        // Not currently used in log, could be used if needed
-                    }
+                    WorkerMessage::FoundPrimeIndex(_pr, _idx) => {}
                     WorkerMessage::Done => {
                         self.is_running = false;
                         remove_receiver = true;
@@ -121,6 +123,18 @@ impl App for MyApp {
                         ui.selectable_value(&mut self.selected_format, OutputFormat::CSV, "CSV");
                         ui.selectable_value(&mut self.selected_format, OutputFormat::JSON, "JSON");
                     });
+
+                ui.separator();
+
+                ui.label("Output Directory:");
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut self.output_dir_input);
+                    if ui.button("Select Folder").clicked() {
+                        if let Some(folder) = FileDialog::new().pick_folder() {
+                            self.output_dir_input = folder.display().to_string();
+                        }
+                    }
+                });
 
                 ui.separator();
                 ui.heading("Sosu-Seisei (Old Method Sieve)");
@@ -161,6 +175,7 @@ impl App for MyApp {
                             self.config.prime_min = self.prime_min_input_old.clone();
                             self.config.prime_max = self.prime_max_input_old.clone();
                             self.config.output_format = self.selected_format.clone();
+                            self.config.output_dir = self.output_dir_input.clone();
                             if let Err(e) = save_config(&self.config) {
                                 self.log.push_str(&format!("Failed to save settings: {}\n", e));
                             }

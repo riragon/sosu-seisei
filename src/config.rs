@@ -3,7 +3,7 @@ use std::fs::{File};
 use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)] // PartialEq追加
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum OutputFormat {
     Text,
     CSV,
@@ -18,6 +18,7 @@ pub struct Config {
     pub prime_min: String,
     pub prime_max: String,
     pub output_format: OutputFormat,
+    pub output_dir: String, // new field for output directory
 }
 
 impl Default for Config {
@@ -29,6 +30,7 @@ impl Default for Config {
             prime_min: "1".to_string(),
             prime_max: "1000000".to_string(),
             output_format: OutputFormat::Text, // Default is Text format
+            output_dir: ".".to_string(),       // default to current directory
         }
     }
 }

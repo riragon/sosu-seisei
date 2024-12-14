@@ -1,14 +1,14 @@
 use std::sync::{mpsc,Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::{BufWriter, Write};
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, create_dir_all};
+use std::path::Path;
 use std::time::Instant;
 use crate::config::{Config, OutputFormat};
 use crate::app::WorkerMessage;
 use rayon::prelude::*;
 use bitvec::prelude::*;
 
-/// Compute integer sqrt: floor(sqrt(n))
 fn integer_sqrt(n: u64) -> u64 {
     let mut low = 0u64;
     let mut high = n;
@@ -31,7 +31,6 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
 
     let root = integer_sqrt(prime_max) + 1;
 
-    // Generate small primes up to root
     let small_primes = simple_sieve(root);
 
     let segment_size = config.segment_size as u64;
@@ -56,31 +55,34 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
 
     let output_format = config.output_format.clone();
 
-    // Choose file name based on output format
     let file_name = match output_format {
         OutputFormat::Text => "primes.txt",
         OutputFormat::CSV  => "primes.csv",
         OutputFormat::JSON => "primes.json",
     };
 
+    if !config.output_dir.is_empty() {
+        create_dir_all(&config.output_dir)?;
+    }
+
+    let full_path = Path::new(&config.output_dir).join(file_name);
+
     let write_handle = std::thread::spawn(move || {
-        let file = OpenOptions::new().create(true).truncate(true).write(true).open(file_name).unwrap();
+        let file = OpenOptions::new().create(true).truncate(true).write(true).open(&full_path).unwrap();
         let mut writer = BufWriter::with_capacity(writer_buffer_size, file);
 
         let mut found_count=0u64;
         let mut processed = 0u64;
 
-        // For JSON format, start the array
         if let OutputFormat::JSON = output_format {
             write!(writer, "[").unwrap();
         }
 
-        let mut first_item = true; // used for JSON formatting
+        let mut first_item = true;
 
         for primes_in_segment in primes_receiver {
             match output_format {
                 OutputFormat::Text => {
-                    // One prime per line
                     for p in primes_in_segment {
                         writeln!(writer,"{}",p).unwrap();
                         found_count+=1;
@@ -88,7 +90,6 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
                     }
                 },
                 OutputFormat::CSV => {
-                    // Comma-separated line
                     let line: String = primes_in_segment.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
                     writeln!(writer,"{}",line).unwrap();
                     for p in primes_in_segment {
@@ -97,7 +98,6 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
                     }
                 },
                 OutputFormat::JSON => {
-                    // JSON array: [2,3,5,7,...]
                     for p in primes_in_segment {
                         if !first_item {
                             write!(writer,",{}", p).unwrap();
@@ -132,7 +132,6 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
             sender_clone.send(WorkerMessage::Eta(eta)).ok();
         }
 
-        // If JSON, close the array
         if let OutputFormat::JSON = output_format {
             write!(writer, "]").unwrap();
         }
@@ -162,7 +161,7 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
 }
 
 pub fn simple_sieve(limit:u64)->Vec<u64>{
-    let mut is_prime: BitVec = BitVec::repeat(true, (limit as usize) + 1);
+    let mut is_prime: bitvec::vec::BitVec = bitvec::vec::BitVec::repeat(true, (limit as usize) + 1);
     is_prime.set(0, false);
     if limit >= 1 {
         is_prime.set(1, false);
@@ -187,9 +186,8 @@ pub fn simple_sieve(limit:u64)->Vec<u64>{
 
 pub fn segmented_sieve(small_primes:&[u64], low:u64, high:u64)->Vec<u64> {
     let size=(high - low +1) as usize;
-    let mut is_prime: BitVec = BitVec::repeat(true, size);
+    let mut is_prime: bitvec::vec::BitVec = bitvec::vec::BitVec::repeat(true, size);
 
-    // Handle low edge cases
     if low == 0 {
         if size > 0 {
             is_prime.set(0, false);
