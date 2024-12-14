@@ -3,12 +3,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::{BufWriter, Write};
 use std::fs::OpenOptions;
 use std::time::Instant;
-use crate::config::Config;
+use crate::config::{Config, OutputFormat};
 use crate::app::WorkerMessage;
 use rayon::prelude::*;
 use bitvec::prelude::*;
 
-/// 整数平方根を求める関数: n に対して floor(sqrt(n)) を返す
+/// Compute integer sqrt: floor(sqrt(n))
 fn integer_sqrt(n: u64) -> u64 {
     let mut low = 0u64;
     let mut high = n;
@@ -29,10 +29,9 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
     let prime_min = config.prime_min.parse::<u64>()?;
     let prime_max = config.prime_max.parse::<u64>()?;
 
-    // 浮動小数点ではなく整数の2分探索で平方根を求める
     let root = integer_sqrt(prime_max) + 1;
 
-    // small_primesは[2..root]までの素数リストを生成
+    // Generate small primes up to root
     let small_primes = simple_sieve(root);
 
     let segment_size = config.segment_size as u64;
@@ -55,18 +54,61 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
     let start_time = Instant::now();
     let total_range = prime_max - prime_min + 1;
 
+    let output_format = config.output_format.clone();
+
+    // Choose file name based on output format
+    let file_name = match output_format {
+        OutputFormat::Text => "primes.txt",
+        OutputFormat::CSV  => "primes.csv",
+        OutputFormat::JSON => "primes.json",
+    };
+
     let write_handle = std::thread::spawn(move || {
-        let file = OpenOptions::new().create(true).truncate(true).write(true).open("primes.txt").unwrap();
+        let file = OpenOptions::new().create(true).truncate(true).write(true).open(file_name).unwrap();
         let mut writer = BufWriter::with_capacity(writer_buffer_size, file);
 
         let mut found_count=0u64;
         let mut processed = 0u64;
 
+        // For JSON format, start the array
+        if let OutputFormat::JSON = output_format {
+            write!(writer, "[").unwrap();
+        }
+
+        let mut first_item = true; // used for JSON formatting
+
         for primes_in_segment in primes_receiver {
-            for p in primes_in_segment {
-                writeln!(writer,"{}",p).unwrap();
-                found_count+=1;
-                sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
+            match output_format {
+                OutputFormat::Text => {
+                    // One prime per line
+                    for p in primes_in_segment {
+                        writeln!(writer,"{}",p).unwrap();
+                        found_count+=1;
+                        sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
+                    }
+                },
+                OutputFormat::CSV => {
+                    // Comma-separated line
+                    let line: String = primes_in_segment.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
+                    writeln!(writer,"{}",line).unwrap();
+                    for p in primes_in_segment {
+                        found_count+=1;
+                        sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
+                    }
+                },
+                OutputFormat::JSON => {
+                    // JSON array: [2,3,5,7,...]
+                    for p in primes_in_segment {
+                        if !first_item {
+                            write!(writer,",{}", p).unwrap();
+                        } else {
+                            write!(writer,"{}", p).unwrap();
+                            first_item = false;
+                        }
+                        found_count+=1;
+                        sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
+                    }
+                },
             }
 
             let segment_range = segment_size.min(total_range-processed);
@@ -88,6 +130,11 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
 
             sender_clone.send(WorkerMessage::Progress { current:processed, total:total_range}).ok();
             sender_clone.send(WorkerMessage::Eta(eta)).ok();
+        }
+
+        // If JSON, close the array
+        if let OutputFormat::JSON = output_format {
+            write!(writer, "]").unwrap();
         }
 
         writer.flush().unwrap();
@@ -121,7 +168,7 @@ pub fn simple_sieve(limit:u64)->Vec<u64>{
         is_prime.set(1, false);
     }
 
-    let lim_sqrt = integer_sqrt(limit); // limitに対しても安全に整数平方根が求まる
+    let lim_sqrt = integer_sqrt(limit);
     for i in 2..=lim_sqrt as usize {
         if is_prime[i] {
             for j in ((i*i)..=limit as usize).step_by(i) {
@@ -142,6 +189,7 @@ pub fn segmented_sieve(small_primes:&[u64], low:u64, high:u64)->Vec<u64> {
     let size=(high - low +1) as usize;
     let mut is_prime: BitVec = BitVec::repeat(true, size);
 
+    // Handle low edge cases
     if low == 0 {
         if size > 0 {
             is_prime.set(0, false);

@@ -1,4 +1,4 @@
-use crate::config::{Config, load_or_create_config, save_config};
+use crate::config::{Config, load_or_create_config, save_config, OutputFormat};
 use eframe::{egui, App};
 use std::sync::{mpsc, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,7 +10,7 @@ pub enum WorkerMessage {
     Log(String),
     Progress { current: u64, total: u64 },
     Eta(String),
-    MemUsage(u64), // CPU Usage 削除、MemUsageのみ
+    MemUsage(u64),
     FoundPrimeIndex(u64, u64),
     Done,
     Stopped,
@@ -27,21 +27,24 @@ pub struct MyApp {
 
     pub progress: f32,
     pub eta: String,
-    pub mem_usage: u64, // CPU usage 削除
+    pub mem_usage: u64,
     pub stop_flag: Arc<AtomicBool>,
 
     pub total_mem: u64,
     pub current_processed: u64,
     pub total_range: u64,
+
+    pub selected_format: OutputFormat,
 }
 
 impl MyApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let config = load_or_create_config().unwrap_or_default();
-
         let mut sys = System::new_all();
         sys.refresh_all();
-        let total_mem = sys.total_memory(); // KB単位
+        let total_mem = sys.total_memory(); // in KB
+
+        let selected_format = config.output_format.clone();
 
         MyApp {
             prime_min_input_old: config.prime_min.clone(),
@@ -59,6 +62,8 @@ impl MyApp {
             total_mem,
             current_processed: 0,
             total_range: 0,
+
+            selected_format,
         }
     }
 }
@@ -81,33 +86,43 @@ impl App for MyApp {
                         self.current_processed = current;
                         self.total_range = total;
                     }
-                    WorkerMessage::Eta(eta_str)=> {
-                        self.eta=eta_str;
+                    WorkerMessage::Eta(eta_str) => {
+                        self.eta = eta_str;
                     }
                     WorkerMessage::MemUsage(mem_usage) => {
                         self.mem_usage = mem_usage;
                     }
-                    WorkerMessage::FoundPrimeIndex(_pr, _idx)=> {
-                        // 必要に応じてログなどに反映可能
+                    WorkerMessage::FoundPrimeIndex(_pr, _idx) => {
+                        // Not currently used in log, could be used if needed
                     }
-                    WorkerMessage::Done=> {
-                        self.is_running=false;
-                        remove_receiver=true;
+                    WorkerMessage::Done => {
+                        self.is_running = false;
+                        remove_receiver = true;
                     }
-                    WorkerMessage::Stopped=> {
-                        self.is_running=false;
-                        remove_receiver=true;
+                    WorkerMessage::Stopped => {
+                        self.is_running = false;
+                        remove_receiver = true;
                         self.log.push_str("Process stopped by user.\n");
                     }
                 }
             }
             if remove_receiver {
-                self.receiver=None;
+                self.receiver = None;
             }
         }
 
         egui::CentralPanel::default().show(ctx,|ui| {
             egui::ScrollArea::vertical().show(ui,|ui| {
+                ui.heading("Output Format");
+                egui::ComboBox::from_label("Select format")
+                    .selected_text(format!("{:?}", self.selected_format))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.selected_format, OutputFormat::Text, "Text");
+                        ui.selectable_value(&mut self.selected_format, OutputFormat::CSV, "CSV");
+                        ui.selectable_value(&mut self.selected_format, OutputFormat::JSON, "JSON");
+                    });
+
+                ui.separator();
                 ui.heading("Sosu-Seisei (Old Method Sieve)");
                 ui.separator();
 
@@ -145,6 +160,7 @@ impl App for MyApp {
                             self.log.clear();
                             self.config.prime_min = self.prime_min_input_old.clone();
                             self.config.prime_max = self.prime_max_input_old.clone();
+                            self.config.output_format = self.selected_format.clone();
                             if let Err(e) = save_config(&self.config) {
                                 self.log.push_str(&format!("Failed to save settings: {}\n", e));
                             }
@@ -197,7 +213,6 @@ impl App for MyApp {
                 ui.label(format!("ETA: {}", self.eta));
                 ui.separator();
 
-                // CPU usage削除、Memory Usageを数値でのみ表示
                 ui.label(format!("Memory Usage: {} KB / {} KB", self.mem_usage, self.total_mem));
 
                 ui.separator();

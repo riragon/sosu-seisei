@@ -3,6 +3,13 @@ use std::fs::{File};
 use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)] // PartialEq追加
+pub enum OutputFormat {
+    Text,
+    CSV,
+    JSON,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub segment_size: u64,
@@ -10,6 +17,7 @@ pub struct Config {
     pub writer_buffer_size: usize,
     pub prime_min: String,
     pub prime_max: String,
+    pub output_format: OutputFormat,
 }
 
 impl Default for Config {
@@ -20,6 +28,7 @@ impl Default for Config {
             writer_buffer_size: 8 * 1024 * 1024,
             prime_min: "1".to_string(),
             prime_max: "1000000".to_string(),
+            output_format: OutputFormat::Text, // Default is Text format
         }
     }
 }

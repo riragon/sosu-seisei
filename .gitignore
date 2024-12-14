@@ -5,6 +5,8 @@
 primes.txt
 settings.txt
 prime.txt
+primes.csv
+primes.json
 text-read-settings.txt
 
 # Rust/Cargo related
