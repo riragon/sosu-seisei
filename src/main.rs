@@ -3,6 +3,6 @@ fn main() {
     let _ = eframe::run_native(
         "Sosu-Seisei Settings",
         options,
-        Box::new(|cc| Ok(Box::new(sosu_seisei::app::MyApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(sosu_seisei_sieve::app::MyApp::new(cc)))),
     );
 }

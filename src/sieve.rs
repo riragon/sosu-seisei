@@ -7,7 +7,6 @@ use std::time::Instant;
 use crate::config::{Config, OutputFormat};
 use crate::app::WorkerMessage;
 use rayon::prelude::*;
-use bitvec::prelude::*;
 
 fn integer_sqrt(n: u64) -> u64 {
     let mut low = 0u64;
@@ -54,36 +53,51 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
     let total_range = prime_max - prime_min + 1;
 
     let output_format = config.output_format.clone();
-
-    let file_name = match output_format {
-        OutputFormat::Text => "primes.txt",
-        OutputFormat::CSV  => "primes.csv",
-        OutputFormat::JSON => "primes.json",
-    };
+    let split_count = config.split_count;
 
     if !config.output_dir.is_empty() {
         create_dir_all(&config.output_dir)?;
     }
 
-    let full_path = Path::new(&config.output_dir).join(file_name);
-
     let write_handle = std::thread::spawn(move || {
-        let file = OpenOptions::new().create(true).truncate(true).write(true).open(&full_path).unwrap();
-        let mut writer = BufWriter::with_capacity(writer_buffer_size, file);
-
         let mut found_count=0u64;
         let mut processed = 0u64;
 
+        let mut file_index = 1;
+        let mut current_prime_count_in_file = 0u64;
+
+        let open_file = |index: usize| {
+            let base_name = match output_format {
+                OutputFormat::Text => "primes",
+                OutputFormat::CSV  => "primes",
+                OutputFormat::JSON => "primes",
+            };
+            let file_ext = match output_format {
+                OutputFormat::Text => "txt",
+                OutputFormat::CSV  => "csv",
+                OutputFormat::JSON => "json",
+            };
+
+            let file_name = if split_count > 0 {
+                format!("{}_{:02}.{}", base_name, index, file_ext)
+            } else {
+                format!("{}.{}", base_name, file_ext)
+            };
+
+            let full_path = Path::new(&config.output_dir).join(file_name);
+            let file = OpenOptions::new().create(true).truncate(true).write(true).open(&full_path).unwrap();
+            BufWriter::with_capacity(writer_buffer_size, file)
+        };
+
+        let mut writer = open_file(file_index);
+
+        let mut first_item = true;
         if let OutputFormat::JSON = output_format {
             write!(writer, "[").unwrap();
         }
 
-        let mut first_item = true;
-
         for primes_in_segment in primes_receiver {
-            // STOPチェック（受信ループ中）
             if stop_flag_clone.load(Ordering::SeqCst) {
-                // ユーザーがSTOPを要求したら即終了
                 break;
             }
 
@@ -92,10 +106,26 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
                     for p in &primes_in_segment {
                         writeln!(writer,"{}",p).unwrap();
                         found_count+=1;
+                        current_prime_count_in_file += 1;
                         sender_clone.send(WorkerMessage::FoundPrimeIndex(*p,found_count)).ok();
-                        // STOPチェック（書き込み中）
+
                         if stop_flag_clone.load(Ordering::SeqCst) {
                             break;
+                        }
+
+                        if split_count > 0 && current_prime_count_in_file >= split_count {
+                            writer.flush().unwrap();
+                            if let OutputFormat::JSON = output_format {
+                                write!(writer, "]").unwrap();
+                                writer.flush().unwrap();
+                            }
+                            file_index += 1;
+                            writer = open_file(file_index);
+                            current_prime_count_in_file = 0;
+                            if let OutputFormat::JSON = output_format {
+                                write!(writer, "[").unwrap();
+                                first_item = true;
+                            }
                         }
                     }
                 },
@@ -104,10 +134,26 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
                     writeln!(writer,"{}",line).unwrap();
                     for p in primes_in_segment {
                         found_count+=1;
+                        current_prime_count_in_file += 1;
                         sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
-                        // STOPチェック
+
                         if stop_flag_clone.load(Ordering::SeqCst) {
                             break;
+                        }
+
+                        if split_count > 0 && current_prime_count_in_file >= split_count {
+                            writer.flush().unwrap();
+                            if let OutputFormat::JSON = output_format {
+                                write!(writer, "]").unwrap();
+                                writer.flush().unwrap();
+                            }
+                            file_index += 1;
+                            writer = open_file(file_index);
+                            current_prime_count_in_file = 0;
+                            if let OutputFormat::JSON = output_format {
+                                write!(writer, "[").unwrap();
+                                first_item = true;
+                            }
                         }
                     }
                 },
@@ -120,10 +166,23 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
                             first_item = false;
                         }
                         found_count+=1;
+                        current_prime_count_in_file += 1;
                         sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
-                        // STOPチェック
+
                         if stop_flag_clone.load(Ordering::SeqCst) {
                             break;
+                        }
+
+                        if split_count > 0 && current_prime_count_in_file >= split_count {
+                            writer.flush().unwrap();
+                            write!(writer, "]").unwrap();
+                            writer.flush().unwrap();
+
+                            file_index += 1;
+                            writer = open_file(file_index);
+                            current_prime_count_in_file = 0;
+                            write!(writer, "[").unwrap();
+                            first_item = true;
                         }
                     }
                 },
@@ -153,7 +212,6 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
             sender_clone.send(WorkerMessage::Progress { current:processed, total:total_range}).ok();
             sender_clone.send(WorkerMessage::Eta(eta)).ok();
 
-            // 再度stop_flagチェック
             if stop_flag_clone.load(Ordering::SeqCst) {
                 break;
             }
@@ -162,7 +220,6 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
         if let OutputFormat::JSON = output_format {
             write!(writer, "]").unwrap();
         }
-
         writer.flush().unwrap();
 
         sender_clone.send(WorkerMessage::Log(format!("Finished old method. Total primes found: {}",found_count))).ok();
@@ -171,11 +228,11 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
 
     segments.into_par_iter().for_each(|(low, high)| {
         if stop_flag.load(Ordering::SeqCst) {
-            return; // STOP要求があればここで即座に返って並列タスク終了
+            return;
         }
         let primes_in_segment = segmented_sieve(&small_primes, low, high, &stop_flag);
         if stop_flag.load(Ordering::SeqCst) {
-            return; // STOP要求が出ていれば結果送信前に中断
+            return;
         }
         primes_sender.send(primes_in_segment).ok();
     });
@@ -191,17 +248,20 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
 }
 
 pub fn simple_sieve(limit:u64)->Vec<u64>{
-    let mut is_prime: bitvec::vec::BitVec = bitvec::vec::BitVec::repeat(true, (limit as usize) + 1);
-    is_prime.set(0, false);
+    let size = (limit as usize) + 1;
+    let mut is_prime = vec![true; size];
+    is_prime[0] = false;
     if limit >= 1 {
-        is_prime.set(1, false);
+        is_prime[1] = false;
     }
 
     let lim_sqrt = integer_sqrt(limit);
     for i in 2..=lim_sqrt as usize {
         if is_prime[i] {
-            for j in ((i*i)..=limit as usize).step_by(i) {
-                is_prime.set(j, false);
+            let mut j = i*i;
+            while j <= limit as usize {
+                is_prime[j] = false;
+                j += i;
             }
         }
     }
@@ -216,21 +276,20 @@ pub fn simple_sieve(limit:u64)->Vec<u64>{
 
 pub fn segmented_sieve(small_primes:&[u64], low:u64, high:u64, stop_flag: &Arc<AtomicBool>)->Vec<u64> {
     let size=(high - low +1) as usize;
-    let mut is_prime: bitvec::vec::BitVec = bitvec::vec::BitVec::repeat(true, size);
+    let mut is_prime = vec![true; size];
 
     if low == 0 {
         if size > 0 {
-            is_prime.set(0, false);
+            is_prime[0] = false;
         }
         if size > 1 {
-            is_prime.set(1, false);
+            is_prime[1] = false;
         }
     } else if low == 1 {
-        is_prime.set(0, false);
+        is_prime[0] = false;
     }
 
     for &p in small_primes {
-        // STOPチェック
         if stop_flag.load(Ordering::SeqCst) {
             return Vec::new();
         }
@@ -246,18 +305,16 @@ pub fn segmented_sieve(small_primes:&[u64], low:u64, high:u64, stop_flag: &Arc<A
 
         let mut j=start;
         while j<=high {
-            // STOPチェック
             if stop_flag.load(Ordering::SeqCst) {
                 return Vec::new();
             }
-            is_prime.set((j - low) as usize, false);
+            is_prime[(j - low) as usize] = false;
             j+=p;
         }
     }
 
     let mut primes=Vec::new();
     for i in 0..size {
-        // STOPチェック
         if stop_flag.load(Ordering::SeqCst) {
             return primes;
         }

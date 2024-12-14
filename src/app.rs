@@ -25,6 +25,7 @@ pub struct MyApp {
 
     pub prime_min_input_old: String,
     pub prime_max_input_old: String,
+    pub split_count_input_old: String, // split_count用
 
     pub progress: f32,
     pub eta: String,
@@ -51,15 +52,17 @@ impl MyApp {
 
         // グローバルなスタイル調整
         let mut style = (*cc.egui_ctx.style()).clone();
-        style.spacing.item_spacing = egui::vec2(8.0, 8.0);  // 項目間の距離を広めに
+        style.spacing.item_spacing = egui::vec2(8.0, 8.0);  // 項目間の距離
         style.spacing.button_padding = egui::vec2(8.0, 4.0); // ボタン内パディング
         style.visuals.window_rounding = egui::Rounding::same(5.0); // 角をわずかに丸く
-        style.visuals.widgets.active.rounding = egui::Rounding::same(4.0); 
+        style.visuals.widgets.active.rounding = egui::Rounding::same(4.0);
         cc.egui_ctx.set_style(style);
 
         MyApp {
             prime_min_input_old: config.prime_min.clone(),
             prime_max_input_old: config.prime_max.clone(),
+            split_count_input_old: config.split_count.to_string(),
+
             config,
             is_running: false,
             log: String::new(),
@@ -121,14 +124,14 @@ impl App for MyApp {
             }
         }
 
-        // ヘッダーパネル：タイトル左、Run/Stopボタン右寄せ
+        // ヘッダーパネル
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.columns(2, |columns| {
                 columns[0].heading("Sosu-Seisei Sieve");
-                columns[0].add_space(4.0); // タイトル下部に少し余裕を
+                columns[0].add_space(4.0);
 
                 columns[1].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(4.0); // ボタン周りにも少しスペース
+                    ui.add_space(4.0);
                     if !self.is_running {
                         if ui.add(egui::Button::new("Run").min_size(egui::vec2(100.0,40.0))).clicked() {
                             let mut errors = Vec::new();
@@ -149,6 +152,14 @@ impl App for MyApp {
                                 }
                             };
 
+                            let split_count = match self.split_count_input_old.trim().parse::<u64>() {
+                                Ok(v) => v,
+                                Err(_) => {
+                                    errors.push("split_count is not a valid u64 integer.");
+                                    0
+                                }
+                            };
+
                             let max_limit = 999_999_999_999_999_999u64;
                             if prime_max > max_limit {
                                 errors.push("prime_max must be <= 999999999999999999.");
@@ -164,6 +175,8 @@ impl App for MyApp {
                                 self.config.prime_max = self.prime_max_input_old.clone();
                                 self.config.output_format = self.selected_format.clone();
                                 self.config.output_dir = self.output_dir_input.clone();
+                                self.config.split_count = split_count;
+
                                 if let Err(e) = save_config(&self.config) {
                                     self.log.push_str(&format!("Failed to save settings: {}\n", e));
                                 }
@@ -207,7 +220,7 @@ impl App for MyApp {
         egui::TopBottomPanel::bottom("log_panel").show(ctx, |ui| {
             ui.heading("Log");
             ui.separator();
-            ui.add_space(4.0); // ログの上にも少しスペース
+            ui.add_space(4.0);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let lines: Vec<&str> = self.log.lines().collect();
                 if !lines.is_empty() {
@@ -220,7 +233,7 @@ impl App for MyApp {
             });
         });
 
-        // 中央パネルを2カラム表示（Settings 左 / Progress 右）
+        // 中央パネル
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.columns(2, |columns| {
                 // 左列（Settings）
@@ -235,6 +248,14 @@ impl App for MyApp {
 
                 columns[0].label("prime_max (u64):");
                 columns[0].text_edit_singleline(&mut self.prime_max_input_old);
+                columns[0].add_space(8.0);
+
+                // split_count 項目追加
+                columns[0].separator();
+                columns[0].add_space(8.0);
+                columns[0].label("split_count (u64):");
+                columns[0].text_edit_singleline(&mut self.split_count_input_old);
+                columns[0].label("0 means no splitting. If a number is specified, the output primes file\nwill be split into multiple files every specified number of primes.");
                 columns[0].add_space(8.0);
 
                 columns[0].separator();
