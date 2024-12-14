@@ -81,12 +81,22 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
         let mut first_item = true;
 
         for primes_in_segment in primes_receiver {
+            // STOPチェック（受信ループ中）
+            if stop_flag_clone.load(Ordering::SeqCst) {
+                // ユーザーがSTOPを要求したら即終了
+                break;
+            }
+
             match output_format {
                 OutputFormat::Text => {
-                    for p in primes_in_segment {
+                    for p in &primes_in_segment {
                         writeln!(writer,"{}",p).unwrap();
                         found_count+=1;
-                        sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
+                        sender_clone.send(WorkerMessage::FoundPrimeIndex(*p,found_count)).ok();
+                        // STOPチェック（書き込み中）
+                        if stop_flag_clone.load(Ordering::SeqCst) {
+                            break;
+                        }
                     }
                 },
                 OutputFormat::CSV => {
@@ -95,6 +105,10 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
                     for p in primes_in_segment {
                         found_count+=1;
                         sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
+                        // STOPチェック
+                        if stop_flag_clone.load(Ordering::SeqCst) {
+                            break;
+                        }
                     }
                 },
                 OutputFormat::JSON => {
@@ -107,8 +121,16 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
                         }
                         found_count+=1;
                         sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
+                        // STOPチェック
+                        if stop_flag_clone.load(Ordering::SeqCst) {
+                            break;
+                        }
                     }
                 },
+            }
+
+            if stop_flag_clone.load(Ordering::SeqCst) {
+                break; 
             }
 
             let segment_range = segment_size.min(total_range-processed);
@@ -130,6 +152,11 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
 
             sender_clone.send(WorkerMessage::Progress { current:processed, total:total_range}).ok();
             sender_clone.send(WorkerMessage::Eta(eta)).ok();
+
+            // 再度stop_flagチェック
+            if stop_flag_clone.load(Ordering::SeqCst) {
+                break;
+            }
         }
 
         if let OutputFormat::JSON = output_format {
@@ -143,10 +170,13 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
     });
 
     segments.into_par_iter().for_each(|(low, high)| {
-        if stop_flag_clone.load(Ordering::SeqCst) {
-            return;
+        if stop_flag.load(Ordering::SeqCst) {
+            return; // STOP要求があればここで即座に返って並列タスク終了
         }
-        let primes_in_segment = segmented_sieve(&small_primes, low, high);
+        let primes_in_segment = segmented_sieve(&small_primes, low, high, &stop_flag);
+        if stop_flag.load(Ordering::SeqCst) {
+            return; // STOP要求が出ていれば結果送信前に中断
+        }
         primes_sender.send(primes_in_segment).ok();
     });
 
@@ -184,7 +214,7 @@ pub fn simple_sieve(limit:u64)->Vec<u64>{
     primes
 }
 
-pub fn segmented_sieve(small_primes:&[u64], low:u64, high:u64)->Vec<u64> {
+pub fn segmented_sieve(small_primes:&[u64], low:u64, high:u64, stop_flag: &Arc<AtomicBool>)->Vec<u64> {
     let size=(high - low +1) as usize;
     let mut is_prime: bitvec::vec::BitVec = bitvec::vec::BitVec::repeat(true, size);
 
@@ -200,9 +230,15 @@ pub fn segmented_sieve(small_primes:&[u64], low:u64, high:u64)->Vec<u64> {
     }
 
     for &p in small_primes {
+        // STOPチェック
+        if stop_flag.load(Ordering::SeqCst) {
+            return Vec::new();
+        }
+
         if p*p>high {
             break;
         }
+
         let mut start=if low%p==0 {low} else {low+(p-(low%p))};
         if start<p*p {
             start=p*p;
@@ -210,6 +246,10 @@ pub fn segmented_sieve(small_primes:&[u64], low:u64, high:u64)->Vec<u64> {
 
         let mut j=start;
         while j<=high {
+            // STOPチェック
+            if stop_flag.load(Ordering::SeqCst) {
+                return Vec::new();
+            }
             is_prime.set((j - low) as usize, false);
             j+=p;
         }
@@ -217,6 +257,10 @@ pub fn segmented_sieve(small_primes:&[u64], low:u64, high:u64)->Vec<u64> {
 
     let mut primes=Vec::new();
     for i in 0..size {
+        // STOPチェック
+        if stop_flag.load(Ordering::SeqCst) {
+            return primes;
+        }
         if is_prime[i] {
             primes.push(low+i as u64);
         }
