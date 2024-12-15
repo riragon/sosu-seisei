@@ -11,7 +11,6 @@ use std::path::Path;
 use std::time::Instant;
 use crate::config::{Config, OutputFormat};
 use crate::app::WorkerMessage;
-use rayon::prelude::*;
 
 fn integer_sqrt(n: u64) -> u64 {
     let mut low = 0u64;
@@ -27,14 +26,13 @@ fn integer_sqrt(n: u64) -> u64 {
     high
 }
 
-pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_flag:Arc<AtomicBool>) -> Result<(),Box<dyn std::error::Error>> {
+pub fn run_program_old(config: Config, sender: mpsc::Sender<WorkerMessage>, stop_flag: Arc<AtomicBool>) -> Result<(),Box<dyn std::error::Error>> {
     sender.send(WorkerMessage::Log("Running old method (Sieve) with parallelization".to_string())).ok();
 
     let prime_min = config.prime_min.parse::<u64>()?;
     let prime_max = config.prime_max.parse::<u64>()?;
 
     let root = integer_sqrt(prime_max) + 1;
-
     let small_primes = simple_sieve(root);
 
     let segment_size = config.segment_size as u64;
@@ -49,14 +47,8 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
     }
 
     let writer_buffer_size = config.writer_buffer_size;
-
-    let (primes_sender, primes_receiver) = mpsc::channel::<Vec<u64>>();
-    let stop_flag_clone = stop_flag.clone();
-    let sender_clone = sender.clone();
-
     let start_time = Instant::now();
     let total_range = prime_max - prime_min + 1;
-
     let output_format = config.output_format.clone();
     let split_count = config.split_count;
 
@@ -64,190 +56,142 @@ pub fn run_program_old(config: Config, sender:mpsc::Sender<WorkerMessage>, stop_
         create_dir_all(&config.output_dir)?;
     }
 
-    let write_handle = std::thread::spawn(move || {
-        let mut found_count=0u64;
-        let mut processed = 0u64;
-
-        let mut file_index = 1;
-        let mut current_prime_count_in_file = 0u64;
-
-        let open_file = |index: usize| {
-            let base_name = match output_format {
-                OutputFormat::Text => "primes",
-                OutputFormat::CSV  => "primes",
-                OutputFormat::JSON => "primes",
-            };
-            let file_ext = match output_format {
-                OutputFormat::Text => "txt",
-                OutputFormat::CSV  => "csv",
-                OutputFormat::JSON => "json",
-            };
-
-            let file_name = if split_count > 0 {
-                format!("{}_{:02}.{}", base_name, index, file_ext)
-            } else {
-                format!("{}.{}", base_name, file_ext)
-            };
-
-            let full_path = Path::new(&config.output_dir).join(file_name);
-            let file = OpenOptions::new().create(true).truncate(true).write(true).open(&full_path).unwrap();
-            BufWriter::with_capacity(writer_buffer_size, file)
-        };
-
-        let mut writer = open_file(file_index);
-
-        let mut first_item = true;
-        if let OutputFormat::JSON = output_format {
-            write!(writer, "[").unwrap();
-        }
-
-        for primes_in_segment in primes_receiver {
-            if stop_flag_clone.load(Ordering::SeqCst) {
-                break;
-            }
-
-            match output_format {
-                OutputFormat::Text => {
-                    for p in &primes_in_segment {
-                        writeln!(writer,"{}",p).unwrap();
-                        found_count+=1;
-                        current_prime_count_in_file += 1;
-                        sender_clone.send(WorkerMessage::FoundPrimeIndex(*p,found_count)).ok();
-
-                        if stop_flag_clone.load(Ordering::SeqCst) {
-                            break;
-                        }
-
-                        if split_count > 0 && current_prime_count_in_file >= split_count {
-                            writer.flush().unwrap();
-                            if let OutputFormat::JSON = output_format {
-                                write!(writer, "]").unwrap();
-                                writer.flush().unwrap();
-                            }
-                            file_index += 1;
-                            writer = open_file(file_index);
-                            current_prime_count_in_file = 0;
-                            if let OutputFormat::JSON = output_format {
-                                write!(writer, "[").unwrap();
-                                first_item = true;
-                            }
-                        }
-                    }
-                },
-                OutputFormat::CSV => {
-                    let line: String = primes_in_segment.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
-                    writeln!(writer,"{}",line).unwrap();
-                    for p in primes_in_segment {
-                        found_count+=1;
-                        current_prime_count_in_file += 1;
-                        sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
-
-                        if stop_flag_clone.load(Ordering::SeqCst) {
-                            break;
-                        }
-
-                        if split_count > 0 && current_prime_count_in_file >= split_count {
-                            writer.flush().unwrap();
-                            if let OutputFormat::JSON = output_format {
-                                write!(writer, "]").unwrap();
-                                writer.flush().unwrap();
-                            }
-                            file_index += 1;
-                            writer = open_file(file_index);
-                            current_prime_count_in_file = 0;
-                            if let OutputFormat::JSON = output_format {
-                                write!(writer, "[").unwrap();
-                                first_item = true;
-                            }
-                        }
-                    }
-                },
-                OutputFormat::JSON => {
-                    for p in primes_in_segment {
-                        if !first_item {
-                            write!(writer,",{}", p).unwrap();
-                        } else {
-                            write!(writer,"{}", p).unwrap();
-                            first_item = false;
-                        }
-                        found_count+=1;
-                        current_prime_count_in_file += 1;
-                        sender_clone.send(WorkerMessage::FoundPrimeIndex(p,found_count)).ok();
-
-                        if stop_flag_clone.load(Ordering::SeqCst) {
-                            break;
-                        }
-
-                        if split_count > 0 && current_prime_count_in_file >= split_count {
-                            writer.flush().unwrap();
-                            write!(writer, "]").unwrap();
-                            writer.flush().unwrap();
-
-                            file_index += 1;
-                            writer = open_file(file_index);
-                            current_prime_count_in_file = 0;
-                            write!(writer, "[").unwrap();
-                            first_item = true;
-                        }
-                    }
-                },
-            }
-
-            if stop_flag_clone.load(Ordering::SeqCst) {
-                break; 
-            }
-
-            let segment_range = segment_size.min(total_range-processed);
-            processed += segment_range;
-            let progress = processed as f64 / total_range as f64;
-
-            let elapsed = start_time.elapsed().as_secs_f64();
-            let eta= if progress>0.0 {
-                let total_time=elapsed/progress;
-                let remaining= total_time - elapsed;
-                let remaining_sec = remaining.round() as u64;
-                let hours = remaining_sec / 3600;
-                let minutes = (remaining_sec % 3600) / 60;
-                let seconds = remaining_sec % 60;
-                format!("ETA: {} hour {} min {} sec", hours, minutes, seconds)
-            } else {
-                "Calculating...".to_string()
-            };
-
-            sender_clone.send(WorkerMessage::Progress { current:processed, total:total_range}).ok();
-            sender_clone.send(WorkerMessage::Eta(eta)).ok();
-
-            if stop_flag_clone.load(Ordering::SeqCst) {
-                break;
-            }
-        }
-
-        if let OutputFormat::JSON = output_format {
-            write!(writer, "]").unwrap();
-        }
-        writer.flush().unwrap();
-
-        sender_clone.send(WorkerMessage::Log(format!("Finished old method. Total primes found: {}",found_count))).ok();
-        sender_clone.send(WorkerMessage::Done).ok();
-    });
-
-    segments.into_par_iter().for_each(|(low, high)| {
+    // 全てのセグメントを逐次処理し、その都度進捗とETAを通知
+    let mut all_primes: Vec<u64> = Vec::new();
+    let mut processed = 0u64; // 処理済みレンジ数
+    for (low, high) in segments.into_iter() {
         if stop_flag.load(Ordering::SeqCst) {
-            return;
+            sender.send(WorkerMessage::Stopped).ok();
+            return Ok(());
         }
         let primes_in_segment = segmented_sieve(&small_primes, low, high, &stop_flag);
         if stop_flag.load(Ordering::SeqCst) {
-            return;
+            sender.send(WorkerMessage::Stopped).ok();
+            return Ok(());
         }
-        primes_sender.send(primes_in_segment).ok();
-    });
 
-    drop(primes_sender);
-    write_handle.join().unwrap();
+        // セグメント範囲ぶん処理完了
+        processed += high - low + 1;
+
+        // 進捗とETA計算
+        let progress = processed as f64 / total_range as f64;
+        let elapsed = start_time.elapsed().as_secs_f64();
+        let eta = if progress > 0.0 {
+            let total_time = elapsed / progress;
+            let remaining = total_time - elapsed;
+            let remaining_sec = remaining.round() as u64;
+            let hours = remaining_sec / 3600;
+            let minutes = (remaining_sec % 3600) / 60;
+            let seconds = remaining_sec % 60;
+            format!("{} hour {} min {} sec", hours, minutes, seconds)
+        } else {
+            "Calculating...".to_string()
+        };
+
+        sender.send(WorkerMessage::Progress { current: processed, total: total_range}).ok();
+        sender.send(WorkerMessage::Eta(eta)).ok();
+
+        // 素数を蓄積
+        all_primes.extend(primes_in_segment);
+    }
 
     if stop_flag.load(Ordering::SeqCst) {
         sender.send(WorkerMessage::Stopped).ok();
+        return Ok(());
     }
+
+    // 全素数をソート
+    all_primes.sort_unstable();
+
+    // 書き込み開始
+    let mut found_count = 0u64;
+    let mut current_prime_count_in_file = 0u64;
+    let mut file_index = 1;
+
+    let open_file = |index: usize| {
+        let base_name = match output_format {
+            OutputFormat::Text => "primes",
+            OutputFormat::CSV  => "primes",
+            OutputFormat::JSON => "primes",
+        };
+        let file_ext = match output_format {
+            OutputFormat::Text => "txt",
+            OutputFormat::CSV  => "csv",
+            OutputFormat::JSON => "json",
+        };
+
+        let file_name = if split_count > 0 {
+            format!("{}_{}.{}", base_name, index, file_ext)
+        } else {
+            format!("{}.{}", base_name, file_ext)
+        };
+
+        let full_path = Path::new(&config.output_dir).join(file_name);
+        let file = OpenOptions::new().create(true).truncate(true).write(true).open(&full_path).unwrap();
+        BufWriter::with_capacity(writer_buffer_size, file)
+    };
+
+    let mut writer = open_file(file_index);
+    let mut first_item = true;
+    if let OutputFormat::JSON = output_format {
+        write!(writer, "[").unwrap();
+    }
+
+    // 全書き込み処理
+    for &p in &all_primes {
+        if stop_flag.load(Ordering::SeqCst) {
+            sender.send(WorkerMessage::Stopped).ok();
+            return Ok(());
+        }
+
+        match output_format {
+            OutputFormat::Text => {
+                writeln!(writer,"{}",p).unwrap();
+            },
+            OutputFormat::CSV => {
+                write!(writer,"{},",p).unwrap();
+            },
+            OutputFormat::JSON => {
+                if !first_item {
+                    write!(writer,",{}", p).unwrap();
+                } else {
+                    write!(writer,"{}", p).unwrap();
+                    first_item = false;
+                }
+            },
+        }
+
+        found_count += 1;
+        current_prime_count_in_file += 1;
+        sender.send(WorkerMessage::FoundPrimeIndex(p, found_count)).ok();
+
+        if split_count > 0 && current_prime_count_in_file >= split_count {
+            writer.flush().unwrap();
+            if let OutputFormat::JSON = output_format {
+                write!(writer, "]").unwrap();
+                writer.flush().unwrap();
+            }
+            file_index += 1;
+            writer = open_file(file_index);
+            current_prime_count_in_file = 0;
+            if let OutputFormat::JSON = output_format {
+                write!(writer, "[").unwrap();
+                first_item = true;
+            }
+        }
+    }
+
+    if let OutputFormat::JSON = output_format {
+        write!(writer, "]").unwrap();
+    }
+    writer.flush().unwrap();
+
+    // 処理完了メッセージ
+    sender.send(WorkerMessage::Progress { current: total_range, total: total_range}).ok();
+    sender.send(WorkerMessage::Eta("0 hour 0 min 0 sec".to_string())).ok();
+
+    sender.send(WorkerMessage::Log(format!("Finished old method. Total primes found: {}", found_count))).ok();
+    sender.send(WorkerMessage::Done).ok();
 
     Ok(())
 }
